@@ -1,0 +1,16 @@
+{
+  "name": "ticketlab-dbvs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Interaktīva DBVS konsultantu ticketu platforma 3. kursa nodarbībai",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "node dev.mjs",
+    "start": "node dev.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.0"
+  }
+}

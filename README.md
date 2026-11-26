@@ -110,3 +110,50 @@ npm test
 ```
 
 Pārbauda ievades validāciju un CSV eksporta drošību. Lokāli papildus var pārbaudīt API manuāli ar `curl`.
+
+
+## Jaunums: neierobežotas klientu izmaiņu kārtas
+
+Katram esošajam ticketam var piešķirt vairākus secīgus klienta papildpieprasījumus.
+Skolotāja panelī izvēlies konkrētu ticketu, līmeni (**viegls / vidējs / sarežģīts**) un:
+- spied **Ieteikt šī klienta situācijai**, lai iegūtu konkrētajam scenārijam pielāgotu uzdevumu;
+- vai ieraksti savus norādījumus;
+- vai atstāj virsrakstu/aprakstu tukšu — serveris ģenerēs individuālu uzdevumu atbilstoši katra ticketam.
+- vari atzīmēt **Visiem esošajiem ticketiem**; jaunās prasības tiks pievienotas katram pašreizējam jaunietim, neizveidojot jaunus ticketus.
+
+Skolēns atgriežas pie sava esošā ticketa ar **to pašu privāto saiti**.
+Viņš redz **klienta izmaiņu vēsturi**, saglabā katras kārtas melnrakstu un iesniedz
+katru prasību neatkarīgi, arī pēc sākotnējās konsultācijas novērtēšanas.
+
+**Datu saglabāšana:** jaunās prasības ieraksta tikai `ticket_changes` tabulā.
+Sākotnējie `tickets.answers`, `grade`, `feedback`, `status`, skolēnu saites un
+iepriekšējās klienta prasības nemainās. Vecais globālais "Klienta pārsteigums"
+ir atstāts saderībai ar iepriekšējiem darbiem.
+
+### Obligāta Neon datubāzes migrācija pirms izvietošanas
+
+1. **Izveido Neon datubāzes rezerves kopiju / branch** pirms izmaiņām.
+2. Neon SQL Editor izvēlies **TicketLab `DATABASE_URL`**, nevis SQL Lab datubāzi.
+3. Izpildi `migrations/001_ticket_changes.sql` (vai atjaunināto `schema.sql`).
+4. Pārliecinies, ka `SELECT to_regclass('public.ticket_changes');` atgriež `ticket_changes`.
+5. Tad izvieto šo kodu Vercel (merge PR / redeploy).
+
+Migrācija izmanto tikai `CREATE TABLE IF NOT EXISTS` un jaunu indeksu.
+Tajā nav neviena `DROP`, `TRUNCATE` vai esošo `tickets` ierakstu `UPDATE`.
+
+**Piezīme par SQL Lab datiem:** TicketLab izmaiņu piešķiršana pati par sevi
+nemaina skolēna MySQL/PostgreSQL/SQLite datubāzi. Sarežģītajos uzdevumos skolēnam
+pirms shēmas pārveides jāsaglabā kopija un jāizmanto droša datu migrācija,
+nevis jādzēš tabulas. TicketLab nevar automātiski novērst datu zudumu, ja
+skolēns pats SQL Lab izpilda destruktīvus SQL vaicājumus.
+
+### API
+
+- `POST ?op=change-preview` — skolotājam ģenerē ieteikumu (`code,difficulty`).
+- `POST ?op=issue-change` — skolotājam pievieno 1 vai visiem esošajiem ticketiem
+  (`code,difficulty,all,title,description`).
+- `POST ?op=save-change` — tikai privātās ticketa saites īpašniekam
+  (`code,token,changeId,response,submit`).
+- `POST ?op=ticket` / `GET ?op=admin-list` — tagad satur arī `ticket.changes` vēsturi.
+
+Šis papildinājums neprasa jaunus Vercel vides mainīgos.

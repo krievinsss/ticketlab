@@ -4,3 +4,17 @@ h1,h2,h3,h4{line-height:1.12;letter-spacing:-.045em;margin:0}h1{font-size:clamp(
 @media(max-width:980px){.hero-art{display:none}.ticket-layout,.admin-grid{grid-template-columns:1fr}.details{position:static;max-height:none}.stat-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:700px){.shell{padding:0 15px}.nav{height:68px}.navlinks{gap:0}.navlinks a,.navlinks button{padding:8px;font-size:12px}.hero{padding:45px 27px;min-height:420px;border-radius:20px}.lead{font-size:15px}.features{grid-template-columns:1fr}.feature{min-height:unset}.page{padding:24px 0 48px}.pageHeader{flex-direction:column;align-items:start}.pageHeader h1{font-size:34px}.panel{padding:21px;border-radius:17px}.fields2{grid-template-columns:1fr;gap:0}.stat-grid{grid-template-columns:repeat(2,1fr)}.radio-cards{grid-template-columns:1fr}.ticket-layout{grid-template-columns:1fr}.footer{display:block}.ticket-card .top{padding:23px}.ticket-card .body{padding:20px}.hero-actions .btn{width:100%}.admin-actions{justify-content:flex-start}.toolbar select{flex:1}.toolbar input{flex-basis:100%}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+
+/* Klienta prasību vairākas kārtas */
+.change-timeline{scroll-margin-top:20px}
+.change-card{border:1px solid #dde7ee;border-radius:15px;padding:19px;margin-top:16px;background:#fafcfd}
+.change-card h3{font-size:17px;margin:12px 0 10px}
+.change-heading{gap:12px;flex-wrap:wrap}
+.change-description{font-size:14px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;color:#42566d;margin:0 0 20px}
+.change-form{border-top:1px solid #e4ebf2;padding-top:17px}
+.change-form .field{margin-bottom:12px}
+.admin-change{border-left:3px solid #18a696;padding:10px 0 10px 15px;margin-top:17px;background:#fbfefd}
+.admin-change .rowBetween{align-items:flex-start;gap:10px;flex-wrap:wrap}
+.admin-change b{font-size:13px}
+.admin-change p{overflow-wrap:anywhere}

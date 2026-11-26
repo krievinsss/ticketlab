@@ -138,6 +138,54 @@ async function submitFinal(){
   try{const data=await api('save',{code:state.ticket.code,token:state.token,answers,submit:true});state.ticket=data.ticket;state.twist=data.twist;showTicket();toast('Konsultācija veiksmīgi iesniegta! 🎉');window.scrollTo(0,0);}
   catch(e){const box=document.getElementById('ticket-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;toast('Pārbaudi aizpildītos laukus.');}
 }
+
+async function saveClientChange(form,submit=false,quiet=false){
+  if(!form||!state.ticket)return;
+  const id=Number(form.dataset.changeId),response=form.elements.response.value;
+  if(submit&&!confirm('Iesniegt šo izmaiņu kārtu? Sākotnējais projekts un agrākās atbildes paliks saglabātas.'))return;
+  const status=form.querySelector('.change-save-status');
+  if(status)status.textContent='Saglabā...';
+  clearTimeout(changeTimers.get(id));
+  // Secīga saglabāšana vienam ID novērš autosave un iesniegšanas sacensību.
+  const previous=changeWriteQueue.get(id)||Promise.resolve();
+  const job=previous.catch(()=>{}).then(()=>api('save-change',{code:state.ticket.code,token:state.token,changeId:id,response,submit}));
+  changeWriteQueue.set(id,job);
+  try{
+    const data=await job,idx=(state.ticket.changes||[]).findIndex(c=>c.id===id);
+    if(idx>=0){
+      state.ticket.changes[idx]=data.change;
+      if(submit){
+        const card=document.querySelector('[data-change-card="'+id+'"]');
+        if(card)card.outerHTML=renderClientChange(data.change,idx);
+      }
+    }
+    if(!submit&&status)status.textContent='✓ Melnraksts saglabāts';
+    if(!quiet)toast(submit?'Labojums iesniegts! Iepriekšējais progress saglabāts.':'Labojuma melnraksts saglabāts!');
+  }catch(e){
+    if(status)status.textContent='⚠ Nav saglabāts';
+    if(!quiet)toast(errText(e));
+  }finally{
+    if(changeWriteQueue.get(id)===job)changeWriteQueue.delete(id);
+  }
+}
+
+function refreshChangeSection(freshTicket,notify=true){
+  if(!state.ticket)return;
+  const oldIds=new Set((state.ticket.changes||[]).map(c=>c.id));
+  const newChanges=freshTicket.changes||[];
+  const unsaved=new Map([...document.querySelectorAll('.change-form')].map(form=>[Number(form.dataset.changeId),form.elements.response.value]));
+  state.ticket.changes=newChanges;
+  const panel=document.getElementById('change-timeline');
+  if(panel){
+    panel.outerHTML=changeTimeline(state.ticket);
+    for(const [id,content] of unsaved){
+      const form=document.querySelector('.change-form[data-change-id="'+id+'"]');
+      if(form)form.elements.response.value=content;
+    }
+  }
+  if(notify&&newChanges.some(c=>!oldIds.has(c.id)))toast('⚡ Klients pievienojis jaunu prasību! Turpini savu projektu.');
+}
+
 root.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target;
   if(form.id==='start-form'){
@@ -151,12 +199,29 @@ root.addEventListener('submit',async event=>{
     catch(e){const box=document.getElementById('login-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
     finally{btn.disabled=false;}
   }else if(form.id==='ticket-form'){await submitFinal();}
+  else if(form.classList.contains('change-form')){await saveClientChange(form,true);}
+  else if(form.id==='issue-change-form'){
+    const b=new FormData(form),all=b.get('all')==='on';
+    if(all&&!confirm('Izsniegt jaunu prasību visiem pašreizējiem konsultantiem? Esošie darbi netiks mainīti.'))return;
+    try{
+      const data=await api('issue-change',{code:state.selected,all,difficulty:b.get('difficulty'),title:b.get('title'),description:b.get('description')});
+      await refreshAdmin();
+      toast('Pievienotas '+data.created+' jaunas prasības. Esošie dati nav mainīti.');
+    }catch(e){const box=document.getElementById('issue-change-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
+  }
   else if(form.id==='review-form'){
     const b=new FormData(form);try{await api('review',{code:state.selected,grade:Number(b.get('grade')),feedback:b.get('feedback')});await refreshAdmin();toast('Vērtējums saglabāts!');}
     catch(e){document.getElementById('review-error').innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
   }
 });
 root.addEventListener('input',event=>{
+  if(event.target.closest('.change-form')){
+    const form=event.target.closest('.change-form'),id=Number(form.dataset.changeId);
+    const status=form.querySelector('.change-save-status');
+    if(status)status.textContent='● Nav saglabāts';
+    clearTimeout(changeTimers.get(id));
+    changeTimers.set(id,setTimeout(()=>saveClientChange(form,false,true),1800));
+  }
   if(event.target.closest('#ticket-form')){updateProgress();const label=document.getElementById('save-status');if(label)label.textContent='● Nav saglabāts';clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(true),1800);}
   if(event.target.id==='ticket-search'){state.search=event.target.value;const el=document.querySelector('.data-table tbody');if(el){const rows=getFilteredTickets().map(t=>`<tr data-open-ticket="${h(t.code)}" class="${state.selected===t.code?'selected':''}"><td><strong>${h(t.name)}</strong><span class="sub">${h(t.group||'Grupa nav norādīta')}</span></td><td class="mono">${h(t.code)}</td><td>${h(t.case?.title)}</td><td>${statusPill(t.status)}</td><td>${t.grade===null?'—':h(t.grade)+'/10'}</td><td class="sub">${date(t.created_at)}</td></tr>`).join('');el.innerHTML=rows||'<tr><td colspan="6" class="center muted">Nav atrastu ierakstu</td></tr>';}}
 });
@@ -167,6 +232,24 @@ root.addEventListener('click',async event=>{
   const action=node.dataset.action;
   if(action==='check-grade'){
     try{const data=await api('ticket',{code:state.ticket.code,token:state.token});state.ticket=data.ticket;state.twist=data.twist;showTicket();toast(data.ticket.status==='reviewed'?'Skolotājs ir novērtējis tavu darbu!':'Vērtējums vēl nav piešķirts.');}catch(e){toast(errText(e));}
+  }else if(action==='check-client-changes'){
+    try{
+      const data=await api('ticket',{code:state.ticket.code,token:state.token});
+      const oldLength=(state.ticket.changes||[]).length;
+      refreshChangeSection(data.ticket);
+      if(oldLength===state.ticket.changes.length)toast('Jaunu prasību pagaidām nav.');
+    }catch(e){toast(errText(e));}
+  }else if(action==='suggest-change'){
+    const form=node.closest('#issue-change-form');
+    if(!form)return;
+    try{
+      const result=await api('change-preview',{code:state.selected,difficulty:form.elements.difficulty.value});
+      form.elements.title.value=result.suggestion.title;
+      form.elements.description.value=result.suggestion.description;
+      toast('Piemērs sagatavots. Vari to labot pirms izsniegšanas.');
+    }catch(e){toast(errText(e));}
+  }else if(action==='save-client-change'){
+    await saveClientChange(node.closest('.change-form'),false);
   }else if(action==='copy-link'){
     try{await navigator.clipboard.writeText(fullLink());toast('Privātā saite nokopēta!');}
     catch {prompt('Nokopē savu atgriešanās saiti:',fullLink());}
@@ -186,6 +269,13 @@ root.addEventListener('click',async event=>{
 refreshTimer=setInterval(async()=>{
   if(state.ticket?.status==='draft' && location.hash.startsWith('#/ticket/') && !state.twist){
     try{const data=await api('status');if(data.twist){const draft=collectAnswers();if(draft)state.ticket.answers=draft;state.twist=true;clearTimeout(saveTimer);showTicket();toast('⚡ Klients tikko mainīja prasības!');}}catch{}
+  }
+  if(state.ticket && location.hash.startsWith('#/ticket/')){
+    try{
+      const fresh=await api('ticket',{code:state.ticket.code,token:state.token});
+      const oldIds=new Set((state.ticket.changes||[]).map(c=>c.id));
+      if((fresh.ticket.changes||[]).some(c=>!oldIds.has(c.id)))refreshChangeSection(fresh.ticket);
+    }catch{}
   }
   if(state.admin && location.hash==='#/admin' && !document.activeElement?.closest('form')){
     try{const data=await api('admin-list');const changed=JSON.stringify(data.tickets.map(x=>[x.code,x.status,x.updated_at]))!==JSON.stringify(state.tickets.map(x=>[x.code,x.status,x.updated_at]));if(changed){state.tickets=data.tickets;state.twist=data.twist;renderAdmin();}}catch{}

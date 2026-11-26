@@ -21,7 +21,7 @@ let writeQueue = Promise.resolve();
 async function localData() {
   if (localCache) return localCache;
   try { localCache = JSON.parse(await fs.readFile(localPath, 'utf8')); }
-  catch (e) { if (e.code !== 'ENOENT') throw e; localCache = {tickets:[], settings:{twist_enabled:'false'}}; }
+  catch (e) { if (e.code !== 'ENOENT') throw e; localCache = {tickets:[], changes:[], settings:{twist_enabled:'false'}}; }
   return localCache;
 }
 async function saveLocal() {
@@ -118,4 +118,68 @@ export async function setTwist(enabled) {
     return enabled;
   }
   return mutateLocal(db=>{db.settings.twist_enabled=String(enabled);return enabled;});
+}
+
+/**
+ * Klienta izmaiņas tiek glabātas atsevišķi no tickets.answers.
+ * Neviena izmaiņu pievienošana vai atbilde nepārraksta sākotnējos darbus/vērtējumus.
+ */
+export async function getChanges(ticketCode) {
+  const sql = await getSql();
+  if (sql) return sql`SELECT * FROM ticket_changes WHERE ticket_code=${ticketCode} ORDER BY id ASC`;
+  return copy(((await localData()).changes ?? []).filter(x=>x.ticket_code===ticketCode).sort((a,b)=>a.id-b.id));
+}
+
+export async function getAllChanges() {
+  const sql = await getSql();
+  if (sql) return sql`SELECT * FROM ticket_changes ORDER BY id ASC`;
+  return copy(((await localData()).changes ?? []).sort((a,b)=>a.id-b.id));
+}
+
+export async function issueChanges(entries) {
+  if (!entries.length) return [];
+  const sql = await getSql();
+  if (sql) {
+    // Viens SQL INSERT visai klasei: atomiska darbība, nekad neizmanto UPDATE tickets.
+    const rows = await sql`INSERT INTO ticket_changes (ticket_code, difficulty, title, description)
+      SELECT c.ticket_code, c.difficulty, c.title, c.description
+      FROM jsonb_to_recordset(${JSON.stringify(entries)}::jsonb)
+        AS c(ticket_code TEXT, difficulty TEXT, title TEXT, description TEXT)
+      JOIN tickets t ON t.code = c.ticket_code
+      RETURNING *`;
+    return rows;
+  }
+  return mutateLocal(db=>{
+    db.changes ??= [];
+    const existing = new Set(db.tickets.map(t=>t.code));
+    if(entries.some(e=>!existing.has(e.ticket_code))) throw new Error('Nav atrasts viens no ticketiem');
+    let nextId = Math.max(0,...db.changes.map(c=>c.id));
+    const now = new Date().toISOString();
+    const created = entries.map(e=>({
+      id:++nextId,ticket_code:e.ticket_code,difficulty:e.difficulty,
+      title:e.title,description:e.description,response:'',status:'draft',
+      created_at:now,updated_at:now,submitted_at:null
+    }));
+    db.changes.push(...created);
+    return copy(created);
+  });
+}
+
+export async function saveChangeResponse(ticketCode, changeId, response, submit) {
+  const sql = await getSql();
+  if (sql) {
+    const rows=await sql`UPDATE ticket_changes SET response=${response},
+      status=${submit?'submitted':'draft'}, updated_at=NOW(),
+      submitted_at=CASE WHEN ${submit} THEN NOW() ELSE submitted_at END
+      WHERE id=${changeId} AND ticket_code=${ticketCode} AND status='draft' RETURNING *`;
+    return rows[0] ?? null;
+  }
+  return mutateLocal(db=>{
+    const item=(db.changes??[]).find(c=>c.ticket_code===ticketCode && c.id===changeId);
+    if(!item || item.status!=='draft') return null;
+    item.response=response;item.status=submit?'submitted':'draft';
+    item.updated_at=new Date().toISOString();
+    if(submit)item.submitted_at=item.updated_at;
+    return copy(item);
+  });
 }

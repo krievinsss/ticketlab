@@ -32,6 +32,46 @@ function collectAnswers(){
   return {dbvs:values.get('dbvs')||'',reasons:[values.get('reason1')||'',values.get('reason2')||'',values.get('reason3')||''],alternative:values.get('alternative')||'',comparison:values.get('comparison')||'',risk:values.get('risk')||'',integrity:values.get('integrity')||'',twist_response:values.get('twist_response')||'',summary:values.get('summary')||''};
 }
 const val=(obj,k)=>h(obj?.[k]||'');
+
+const changeLevelLabels={easy:'Viegls',medium:'Vidējs',hard:'Sarežģīts'};
+const changeStatusLabels={draft:'Gaida izpildi',submitted:'Iesniegts'};
+const changeTimers=new Map();
+const changeWriteQueue=new Map();
+
+function renderClientChange(item,index){
+  const saved=item.status==='submitted';
+  return `<article class="change-card" data-change-card="${item.id}">
+    <div class="rowBetween change-heading"><div class="kicker"><span class="pill ${item.difficulty==='hard'?'red':item.difficulty==='medium'?'orange':'green'}">${h(changeLevelLabels[item.difficulty]||item.difficulty)}</span><strong>Izmaiņa #${index+1}</strong></div><span class="sub">${date(item.created_at)}</span></div>
+    <h3>${h(item.title)}</h3><p class="change-description">${h(item.description)}</p>
+    ${saved?`<div class="notice">✓ Izmaiņa iesniegta ${date(item.submitted_at)}. Iepriekšējais darbs un dati ir saglabāti.</div><div class="answer-block"><b>Tava atbilde</b><p>${h(item.response)}</p></div>`:
+    `<form class="change-form" data-change-id="${item.id}"><div class="field"><label>Ko izmainīji savā datubāzē? SQL piemēri, SQL Lab saite, testi un secinājumi</label><textarea name="response" maxlength="6000" rows="5" placeholder="Apraksti veiktās izmaiņas. Vecās tabulas un datus nedzēs...">${h(item.response)}</textarea></div><div class="rowBetween" style="flex-wrap:wrap"><span class="sub change-save-status">${item.response?'✓ Melnraksts saglabāts':'Melnraksts'}</span><div class="admin-actions"><button type="button" class="btn btn-secondary btn-sm" data-action="save-client-change">💾 Saglabāt</button><button type="submit" class="btn btn-primary btn-sm">📨 Iesniegt labojumu</button></div></div></form>`}
+  </article>`;
+}
+function changeTimeline(t) {
+  const changes=t.changes||[];
+  return `<section class="panel change-timeline" id="change-timeline"><div class="rowBetween"><div><span class="pill blue">🔁 Projekta turpinājums</span><div class="space8"></div><h3>Klienta izmaiņu vēsture</h3></div><span class="pill border">${changes.length} kārtas</span></div>
+  <p class="sub" style="margin:10px 0 16px">Jauna prasība nemaina tavu sākotnējo konsultāciju. Turpini pilnveidot jau izveidoto SQL Lab datubāzi — neveido visu no nulles.</p>
+  ${changes.length?changes.map(renderClientChange).join(''):'<div class="notice">Pagaidām nav jaunu izmaiņu. Klients var tās iesniegt arī pēc konsultācijas novērtēšanas.</div>'}
+  <div class="space16"></div><button class="btn btn-outline btn-sm" data-action="check-client-changes">↻ Pārbaudīt jaunas prasības</button></section>`;
+}
+function adminChangePanel(t){
+  const list=t.changes||[];
+  const history=list.map((c,i)=>`<div class="admin-change"><div class="rowBetween"><div><span class="pill ${c.difficulty==='hard'?'red':c.difficulty==='medium'?'orange':'green'}">${h(changeLevelLabels[c.difficulty])}</span> <b>#${i+1} ${h(c.title)}</b></div><span class="pill ${c.status==='submitted'?'green':'border'}">${h(changeStatusLabels[c.status])}</span></div><p class="sub" style="margin-top:8px;white-space:pre-wrap">${h(c.description)}</p>${c.response?`<div class="answer-block"><b>Jaunieša atbilde</b><p>${h(c.response)}</p></div>`:''}</div>`).join('');
+  return `<div class="divider"></div><h3>🔁 Klienta labojumi (${list.length})</h3><p class="sub">Jaunās prasības tiek pievienotas vēsturei. Vecās atbildes, vērtējums un projekts netiek dzēsti.</p>
+    <div class="space16"></div>${history||'<p class="muted small">Vēl nav pievienotu izmaiņu.</p>'}
+    <div class="divider"></div><form id="issue-change-form">
+      <h3>➕ Pievienot nākamo izmaiņu kārtu</h3>
+      <div class="space16"></div><div class="field"><label>Grūtības līmenis</label>
+        <select name="difficulty" required><option value="easy">🟢 Viegls — lauki un ierobežojumi</option><option value="medium">🟠 Vidējs — tabulas un relācijas</option><option value="hard">🔴 Sarežģīts — struktūras maiņa un migrācija</option></select>
+      </div><button type="button" class="btn btn-secondary btn-sm" data-action="suggest-change">✨ Ieteikt šī klienta situācijai</button>
+      <div class="space16"></div><div class="field"><label>Prasības virsraksts</label><input name="title" maxlength="160" placeholder="Atstāj tukšu automātiskam ieteikumam" /></div>
+      <div class="field"><label>Klienta jaunās prasības</label><textarea name="description" maxlength="4000" rows="5" placeholder="Atstāj tukšu automātiskai, individuālai prasībai"></textarea></div>
+      <label class="checkbox-group"><input type="checkbox" name="all" /> Pievienot VISIEM esošajiem ticketiem (katram atbilstoši viņa klientam)</label>
+      <p class="sub">Ja atstāsi virsrakstu un aprakstu tukšu, katram skolēnam ģenerēsies viņa scenārijam piemērots uzdevums.</p>
+      <div id="issue-change-error"></div><button type="submit" class="btn btn-primary btn-block">⚡ Izsniegt jauno prasību</button>
+    </form>`;
+}
+
 function showTicket(){
   const t=state.ticket;
   if(!t){renderLoading();return;}
@@ -52,7 +92,7 @@ function showTicket(){
    ${twistPart}
    <section class="formSection"><div class="formTitle"><span class="formNumber">✓</span><h3>Gala secinājums</h3></div>${textArea('summary','Rekomendācija klientam','Vienā rindkopā paskaidro, ko iesaki un kāpēc.',3,a.summary)}</section>
    <div id="ticket-error"></div><div class="stickyActions"><button type="button" class="btn btn-secondary" data-action="save">💾 Saglabāt melnrakstu</button><button type="submit" class="btn btn-primary">📨 Iesniegt konsultāciju →</button></div><p class="sub" style="margin-top:12px">Pēc iesniegšanas labošana vairs nebūs pieejama. Lai saņemtu komentāru, saglabā ticketa saiti.</p></form></div>`;
-  root.innerHTML=shell(`<main class="page"><a href="#/" class="backLink">← Uz sākumu</a>${subHeader}<div class="ticket-layout"><aside class="ticket-card"><div class="top"><div class="rowBetween"><span class="pill dark">📩 Jauns klients</span><span class="ticket-code">${h(t.code)}</span></div><h2>${h(c?.title)}</h2><p>${h(c?.company)} · ${h(c?.sector)}</p></div><div class="body"><div class="ticketmeta"><span class="pill border">💸 ${h(c?.budget)}</span><span class="pill border">❗ ${h(c?.severity)} prioritāte</span></div><h3>Situācijas apraksts</h3><p class="muted" style="margin-top:8px">${h(c?.intro)}</p><div class="space24"></div><h3>Klienta prasības</h3>${requirements}<div class="ticket-aside-note">💡 Ne vienmēr ir viena absolūti pareizā DBVS. Svarīgi ir argumenti un izvēles atbilstība prasībām.</div><div class="space16"></div><button class="btn btn-outline btn-block btn-sm" data-action="copy-link">🔗 Kopēt privāto atgriešanās saiti</button>${!state.twist&&!readonly?'<div class="space16"></div><button class="btn btn-secondary btn-block btn-sm" data-action="check-twist">🔔 Pārbaudīt jaunas prasības</button>':''}</div></aside><div>${body}</div></div></main>`);
+  root.innerHTML=shell(`<main class="page"><a href="#/" class="backLink">← Uz sākumu</a>${subHeader}<div class="ticket-layout"><aside class="ticket-card"><div class="top"><div class="rowBetween"><span class="pill dark">📩 Jauns klients</span><span class="ticket-code">${h(t.code)}</span></div><h2>${h(c?.title)}</h2><p>${h(c?.company)} · ${h(c?.sector)}</p></div><div class="body"><div class="ticketmeta"><span class="pill border">💸 ${h(c?.budget)}</span><span class="pill border">❗ ${h(c?.severity)} prioritāte</span></div><h3>Situācijas apraksts</h3><p class="muted" style="margin-top:8px">${h(c?.intro)}</p><div class="space24"></div><h3>Klienta prasības</h3>${requirements}<div class="ticket-aside-note">💡 Ne vienmēr ir viena absolūti pareizā DBVS. Svarīgi ir argumenti un izvēles atbilstība prasībām.</div><div class="space16"></div><button class="btn btn-outline btn-block btn-sm" data-action="copy-link">🔗 Kopēt privāto atgriešanās saiti</button>${!state.twist&&!readonly?'<div class="space16"></div><button class="btn btn-secondary btn-block btn-sm" data-action="check-twist">🔔 Pārbaudīt jaunas prasības</button>':''}</div></aside><div>${body}<div class="space24"></div>${changeTimeline(t)}</div></div></main>`);
   updateProgress();
 }
 function answerBlocks(t){const a=t.answers||{};const pairs=[['Izvēlētā DBVS',a.dbvs],['1. arguments',a.reasons?.[0]],['2. arguments',a.reasons?.[1]],['3. arguments',a.reasons?.[2]],['Alternatīva',a.alternative],['Salīdzinājums',a.comparison],['Riski',a.risk],['Integritāte un atjaunošana',a.integrity],['Jaunā klienta prasība',a.twist_response],['Secinājums',a.summary]];return pairs.filter(([k,v])=>Boolean(v)).map(([k,v])=>`<div class="answer-block"><b>${h(k)}</b><p>${h(v)}</p></div>`).join('');}
@@ -67,7 +107,8 @@ function renderAdmin(){
   const picked=all.find(t=>t.code===state.selected);
   const rows=getFilteredTickets().map(t=>`<tr data-open-ticket="${h(t.code)}" class="${state.selected===t.code?'selected':''}"><td><strong>${h(t.name)}</strong><span class="sub">${h(t.group||'Grupa nav norādīta')}</span></td><td class="mono">${h(t.code)}</td><td>${h(t.case?.title)}</td><td>${statusPill(t.status)}</td><td>${t.grade===null?'—':h(t.grade)+'/10'}</td><td class="sub">${date(t.created_at)}</td></tr>`).join('');
   const details=picked?`<div class="panel details"><div class="rowBetween"><span class="pill blue">${h(picked.code)}</span>${statusPill(picked.status)}</div><div class="space16"></div><h3>${h(picked.name)}</h3><p class="sub">${h(picked.group||'Grupa nav norādīta')} · ${date(picked.created_at)}</p><div class="space16"></div><p><b>Klienta situācija:</b> ${h(picked.case?.title)}</p><div class="divider"></div><h3>Atbildes</h3>${answerBlocks(picked)||'<p class="muted">Konsultants vēl nav sācis aizpildīt atbildes.</p>'}<div class="divider"></div>${['submitted','reviewed'].includes(picked.status)?`<form id="review-form"><h3>Skolotāja vērtējums</h3><div class="space16"></div><div class="field"><label>Formatīvais vērtējums (0–10)</label><select name="grade" required><option value="">Izvēlies...</option>${Array.from({length:11},(_,i)=>`<option value="${i}" ${picked.grade===i?'selected':''}>${i} punkti</option>`).join('')}</select></div><div class="field"><label>Atgriezeniskā saite</label><textarea name="feedback" placeholder="Ko izdevās pamatot? Kas jāprecizē?" maxlength="2000">${h(picked.feedback)}</textarea></div><div id="review-error"></div><button class="btn btn-primary btn-block" type="submit">✓ Saglabāt vērtējumu</button></form>`:'<div class="notice warning">⏳ Šis ir melnraksts. Vērtēt var pēc iesniegšanas.</div>'}</div>`:`<div class="panel details"><div class="empty"><div class="emoji">👈</div><h3>Atver kādu ticketu</h3><p>Uzklikšķini uz jaunieša rindas, lai aplūkotu visu viņa iesniegumu un ieliktu vērtējumu.</p></div></div>`;
-  root.innerHTML=shell(`<main class="page"><div class="pageHeader"><div><span class="pill green">● Skolotāja darba vieta</span><h1>Labdien, skolotāj! 👋</h1><p class="muted">Visi IT konsultanti un viņu klientu uzdevumi.</p></div><div class="admin-actions"><button class="btn btn-outline btn-sm" data-action="refresh">↻ Atsvaidzināt</button><button class="btn btn-secondary btn-sm" data-action="export">↓ CSV eksports</button><button class="btn btn-dark btn-sm" data-action="logout">Iziet</button></div></div><section class="stat-grid"><div class="stat-card"><span class="sub">Izveidoti ticketi</span><strong>${all.length}</strong><span class="small muted">Kopā</span></div><div class="stat-card"><span class="sub">Procesā</span><strong>${all.filter(t=>t.status==='draft').length}</strong><span class="small muted">Melnraksti</span></div><div class="stat-card"><span class="sub">Iesniegumi</span><strong>${submitted.length}</strong><span class="small muted">Iesniegti vai novērtēti</span></div><div class="stat-card"><span class="sub">Novērtēti</span><strong>${reviewed.length}</strong><span class="small muted">Vidējais ${reviewed.length?(reviewed.reduce((s,t)=>s+Number(t.grade||0),0)/reviewed.length).toFixed(1):'—'} / 10</span></div></section><div class="space24"></div><section class="panel"><div class="rowBetween"><div><h3>🚨 Klienta pārsteigums</h3><p class="sub">Aktivizē jaunu prasību visiem konsultantiem, kuri vēl aizpilda ticketu.</p></div><button data-action="toggle-twist" class="btn ${state.twist?'btn-secondary':'btn-primary'} btn-sm">${state.twist?'Izslēgt pārsteigumu':'⚡ Aktivizēt jaunu prasību'}</button></div><div class="space8"></div><span class="pill ${state.twist?'orange':'border'}">${state.twist?'● Aktīvs':'○ Nav aktivizēts'}</span></section><div class="space24"></div><div class="admin-grid"><section class="panel"><div class="sectionHead"><div><h3>Jauniešu ticketi</h3><p class="sub">Izvēlies rindu, lai redzētu atbildes un vērtējumu.</p></div><span class="pill border">${getFilteredTickets().length} ieraksti</span></div><div class="toolbar"><input id="ticket-search" placeholder="🔎 Meklēt vārdu, grupu, ticketu..." value="${h(state.search)}"/><select id="ticket-filter"><option value="all" ${state.filter==='all'?'selected':''}>Visi statusi</option><option value="draft" ${state.filter==='draft'?'selected':''}>Procesā</option><option value="submitted" ${state.filter==='submitted'?'selected':''}>Iesniegti</option><option value="reviewed" ${state.filter==='reviewed'?'selected':''}>Novērtēti</option></select></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Konsultants</th><th>Tickets</th><th>Klients</th><th>Statuss</th><th>Vērt.</th><th>Izveidots</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="center muted" style="padding:28px">Nav atrastu ticketu.</td></tr>'}</tbody></table></div></section>${details}</div></main>`);
+  const detailsWithChanges=picked?details.slice(0,-6)+adminChangePanel(picked)+'</div>':details;
+  root.innerHTML=shell(`<main class="page"><div class="pageHeader"><div><span class="pill green">● Skolotāja darba vieta</span><h1>Labdien, skolotāj! 👋</h1><p class="muted">Visi IT konsultanti un viņu klientu uzdevumi.</p></div><div class="admin-actions"><button class="btn btn-outline btn-sm" data-action="refresh">↻ Atsvaidzināt</button><button class="btn btn-secondary btn-sm" data-action="export">↓ CSV eksports</button><button class="btn btn-dark btn-sm" data-action="logout">Iziet</button></div></div><section class="stat-grid"><div class="stat-card"><span class="sub">Izveidoti ticketi</span><strong>${all.length}</strong><span class="small muted">Kopā</span></div><div class="stat-card"><span class="sub">Procesā</span><strong>${all.filter(t=>t.status==='draft').length}</strong><span class="small muted">Melnraksti</span></div><div class="stat-card"><span class="sub">Iesniegumi</span><strong>${submitted.length}</strong><span class="small muted">Iesniegti vai novērtēti</span></div><div class="stat-card"><span class="sub">Novērtēti</span><strong>${reviewed.length}</strong><span class="small muted">Vidējais ${reviewed.length?(reviewed.reduce((s,t)=>s+Number(t.grade||0),0)/reviewed.length).toFixed(1):'—'} / 10</span></div></section><div class="space24"></div><section class="panel"><div class="rowBetween"><div><h3>🚨 Klienta pārsteigums</h3><p class="sub">Aktivizē jaunu prasību visiem konsultantiem, kuri vēl aizpilda ticketu.</p></div><button data-action="toggle-twist" class="btn ${state.twist?'btn-secondary':'btn-primary'} btn-sm">${state.twist?'Izslēgt pārsteigumu':'⚡ Aktivizēt jaunu prasību'}</button></div><div class="space8"></div><span class="pill ${state.twist?'orange':'border'}">${state.twist?'● Aktīvs':'○ Nav aktivizēts'}</span></section><div class="space24"></div><div class="admin-grid"><section class="panel"><div class="sectionHead"><div><h3>Jauniešu ticketi</h3><p class="sub">Izvēlies rindu, lai redzētu atbildes un vērtējumu.</p></div><span class="pill border">${getFilteredTickets().length} ieraksti</span></div><div class="toolbar"><input id="ticket-search" placeholder="🔎 Meklēt vārdu, grupu, ticketu..." value="${h(state.search)}"/><select id="ticket-filter"><option value="all" ${state.filter==='all'?'selected':''}>Visi statusi</option><option value="draft" ${state.filter==='draft'?'selected':''}>Procesā</option><option value="submitted" ${state.filter==='submitted'?'selected':''}>Iesniegti</option><option value="reviewed" ${state.filter==='reviewed'?'selected':''}>Novērtēti</option></select></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Konsultants</th><th>Tickets</th><th>Klients</th><th>Statuss</th><th>Vērt.</th><th>Izveidots</th></tr></thead><tbody>${rows||'<tr><td colspan="6" class="center muted" style="padding:28px">Nav atrastu ticketu.</td></tr>'}</tbody></table></div></section>${detailsWithChanges}</div></main>`);
 }
 async function fetchTicket(code,token){
   state.ticket=null;state.token=token;renderLoading();
@@ -97,6 +138,54 @@ async function submitFinal(){
   try{const data=await api('save',{code:state.ticket.code,token:state.token,answers,submit:true});state.ticket=data.ticket;state.twist=data.twist;showTicket();toast('Konsultācija veiksmīgi iesniegta! 🎉');window.scrollTo(0,0);}
   catch(e){const box=document.getElementById('ticket-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;toast('Pārbaudi aizpildītos laukus.');}
 }
+
+async function saveClientChange(form,submit=false,quiet=false){
+  if(!form||!state.ticket)return;
+  const id=Number(form.dataset.changeId),response=form.elements.response.value;
+  if(submit&&!confirm('Iesniegt šo izmaiņu kārtu? Sākotnējais projekts un agrākās atbildes paliks saglabātas.'))return;
+  const status=form.querySelector('.change-save-status');
+  if(status)status.textContent='Saglabā...';
+  clearTimeout(changeTimers.get(id));
+  // Secīga saglabāšana vienam ID novērš autosave un iesniegšanas sacensību.
+  const previous=changeWriteQueue.get(id)||Promise.resolve();
+  const job=previous.catch(()=>{}).then(()=>api('save-change',{code:state.ticket.code,token:state.token,changeId:id,response,submit}));
+  changeWriteQueue.set(id,job);
+  try{
+    const data=await job,idx=(state.ticket.changes||[]).findIndex(c=>c.id===id);
+    if(idx>=0){
+      state.ticket.changes[idx]=data.change;
+      if(submit){
+        const card=document.querySelector('[data-change-card="'+id+'"]');
+        if(card)card.outerHTML=renderClientChange(data.change,idx);
+      }
+    }
+    if(!submit&&status)status.textContent='✓ Melnraksts saglabāts';
+    if(!quiet)toast(submit?'Labojums iesniegts! Iepriekšējais progress saglabāts.':'Labojuma melnraksts saglabāts!');
+  }catch(e){
+    if(status)status.textContent='⚠ Nav saglabāts';
+    if(!quiet)toast(errText(e));
+  }finally{
+    if(changeWriteQueue.get(id)===job)changeWriteQueue.delete(id);
+  }
+}
+
+function refreshChangeSection(freshTicket,notify=true){
+  if(!state.ticket)return;
+  const oldIds=new Set((state.ticket.changes||[]).map(c=>c.id));
+  const newChanges=freshTicket.changes||[];
+  const unsaved=new Map([...document.querySelectorAll('.change-form')].map(form=>[Number(form.dataset.changeId),form.elements.response.value]));
+  state.ticket.changes=newChanges;
+  const panel=document.getElementById('change-timeline');
+  if(panel){
+    panel.outerHTML=changeTimeline(state.ticket);
+    for(const [id,content] of unsaved){
+      const form=document.querySelector('.change-form[data-change-id="'+id+'"]');
+      if(form)form.elements.response.value=content;
+    }
+  }
+  if(notify&&newChanges.some(c=>!oldIds.has(c.id)))toast('⚡ Klients pievienojis jaunu prasību! Turpini savu projektu.');
+}
+
 root.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target;
   if(form.id==='start-form'){
@@ -110,12 +199,29 @@ root.addEventListener('submit',async event=>{
     catch(e){const box=document.getElementById('login-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
     finally{btn.disabled=false;}
   }else if(form.id==='ticket-form'){await submitFinal();}
+  else if(form.classList.contains('change-form')){await saveClientChange(form,true);}
+  else if(form.id==='issue-change-form'){
+    const b=new FormData(form),all=b.get('all')==='on';
+    if(all&&!confirm('Izsniegt jaunu prasību visiem pašreizējiem konsultantiem? Esošie darbi netiks mainīti.'))return;
+    try{
+      const data=await api('issue-change',{code:state.selected,all,difficulty:b.get('difficulty'),title:b.get('title'),description:b.get('description')});
+      await refreshAdmin();
+      toast('Pievienotas '+data.created+' jaunas prasības. Esošie dati nav mainīti.');
+    }catch(e){const box=document.getElementById('issue-change-error');if(box)box.innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
+  }
   else if(form.id==='review-form'){
     const b=new FormData(form);try{await api('review',{code:state.selected,grade:Number(b.get('grade')),feedback:b.get('feedback')});await refreshAdmin();toast('Vērtējums saglabāts!');}
     catch(e){document.getElementById('review-error').innerHTML=`<div class="inputError">${h(errText(e))}</div>`;}
   }
 });
 root.addEventListener('input',event=>{
+  if(event.target.closest('.change-form')){
+    const form=event.target.closest('.change-form'),id=Number(form.dataset.changeId);
+    const status=form.querySelector('.change-save-status');
+    if(status)status.textContent='● Nav saglabāts';
+    clearTimeout(changeTimers.get(id));
+    changeTimers.set(id,setTimeout(()=>saveClientChange(form,false,true),1800));
+  }
   if(event.target.closest('#ticket-form')){updateProgress();const label=document.getElementById('save-status');if(label)label.textContent='● Nav saglabāts';clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(true),1800);}
   if(event.target.id==='ticket-search'){state.search=event.target.value;const el=document.querySelector('.data-table tbody');if(el){const rows=getFilteredTickets().map(t=>`<tr data-open-ticket="${h(t.code)}" class="${state.selected===t.code?'selected':''}"><td><strong>${h(t.name)}</strong><span class="sub">${h(t.group||'Grupa nav norādīta')}</span></td><td class="mono">${h(t.code)}</td><td>${h(t.case?.title)}</td><td>${statusPill(t.status)}</td><td>${t.grade===null?'—':h(t.grade)+'/10'}</td><td class="sub">${date(t.created_at)}</td></tr>`).join('');el.innerHTML=rows||'<tr><td colspan="6" class="center muted">Nav atrastu ierakstu</td></tr>';}}
 });
@@ -126,6 +232,24 @@ root.addEventListener('click',async event=>{
   const action=node.dataset.action;
   if(action==='check-grade'){
     try{const data=await api('ticket',{code:state.ticket.code,token:state.token});state.ticket=data.ticket;state.twist=data.twist;showTicket();toast(data.ticket.status==='reviewed'?'Skolotājs ir novērtējis tavu darbu!':'Vērtējums vēl nav piešķirts.');}catch(e){toast(errText(e));}
+  }else if(action==='check-client-changes'){
+    try{
+      const data=await api('ticket',{code:state.ticket.code,token:state.token});
+      const oldLength=(state.ticket.changes||[]).length;
+      refreshChangeSection(data.ticket);
+      if(oldLength===state.ticket.changes.length)toast('Jaunu prasību pagaidām nav.');
+    }catch(e){toast(errText(e));}
+  }else if(action==='suggest-change'){
+    const form=node.closest('#issue-change-form');
+    if(!form)return;
+    try{
+      const result=await api('change-preview',{code:state.selected,difficulty:form.elements.difficulty.value});
+      form.elements.title.value=result.suggestion.title;
+      form.elements.description.value=result.suggestion.description;
+      toast('Piemērs sagatavots. Vari to labot pirms izsniegšanas.');
+    }catch(e){toast(errText(e));}
+  }else if(action==='save-client-change'){
+    await saveClientChange(node.closest('.change-form'),false);
   }else if(action==='copy-link'){
     try{await navigator.clipboard.writeText(fullLink());toast('Privātā saite nokopēta!');}
     catch {prompt('Nokopē savu atgriešanās saiti:',fullLink());}
@@ -145,6 +269,13 @@ root.addEventListener('click',async event=>{
 refreshTimer=setInterval(async()=>{
   if(state.ticket?.status==='draft' && location.hash.startsWith('#/ticket/') && !state.twist){
     try{const data=await api('status');if(data.twist){const draft=collectAnswers();if(draft)state.ticket.answers=draft;state.twist=true;clearTimeout(saveTimer);showTicket();toast('⚡ Klients tikko mainīja prasības!');}}catch{}
+  }
+  if(state.ticket && location.hash.startsWith('#/ticket/')){
+    try{
+      const fresh=await api('ticket',{code:state.ticket.code,token:state.token});
+      const oldIds=new Set((state.ticket.changes||[]).map(c=>c.id));
+      if((fresh.ticket.changes||[]).some(c=>!oldIds.has(c.id)))refreshChangeSection(fresh.ticket);
+    }catch{}
   }
   if(state.admin && location.hash==='#/admin' && !document.activeElement?.closest('form')){
     try{const data=await api('admin-list');const changed=JSON.stringify(data.tickets.map(x=>[x.code,x.status,x.updated_at]))!==JSON.stringify(state.tickets.map(x=>[x.code,x.status,x.updated_at]));if(changed){state.tickets=data.tickets;state.twist=data.twist;renderAdmin();}}catch{}

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {cases, publicCase} from './cases.js';
-import {createTicket,getTicket,saveStudentTicket,getAllTickets,reviewTicket,getTwist,setTwist} from './store.js';
+import {createTicket,getTicket,saveStudentTicket,getAllTickets,reviewTicket,getTwist,setTwist,getChanges,getAllChanges,issueChanges,saveChangeResponse} from './store.js';
+import {changeLevels,suggestChange} from './change-templates.js';
 
 const isProd = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 const env = (key, fallback) => process.env[key] || (isProd ? '' : fallback);
@@ -40,7 +41,8 @@ function isAdmin(req) {
   if (!safeEqual(sig,expected)) return false;
   try {const data=JSON.parse(Buffer.from(payload,'base64url').toString());return data.role==='teacher' && Number(data.exp)>Date.now();} catch {return false;}
 }
-const ticketPublic=t=>({
+const ticketPublic=(t,changes=[])=>({
+  changes,
   code:t.code,name:t.consultant_name,group:t.class_group,status:t.status,case:publicCase(t.case_id),
   answers:t.answers??{},grade:t.grade,feedback:t.feedback,
   created_at:t.created_at,submitted_at:t.submitted_at,reviewed_at:t.reviewed_at
@@ -127,7 +129,7 @@ export async function handler(req,res) {
       const code=clean(b.code,20),token=b.token||'';
       const row=await getTicket(code);
       if(!verifyStudent(row,token))return fail(res,404,'Tickets nav atrasts vai piekļuves saite nav pareiza');
-      return send(res,200,{ok:true,ticket:ticketPublic(row),twist:await getTwist()});
+      return send(res,200,{ok:true,ticket:ticketPublic(row,await getChanges(row.code)),twist:await getTwist()});
     }
     if(op==='save'&&method==='POST') {
       const b=await parseBody(req),row=await getTicket(clean(b.code,20));
@@ -137,11 +139,17 @@ export async function handler(req,res) {
       const answers=validateAnswers(b.answers,submit,twist);
       const changed=await saveStudentTicket(row.code,answers,submit);
       if(!changed)return fail(res,409,'Tickets vairs nav rediģējams');
-      return send(res,200,{ok:true,ticket:ticketPublic(changed),twist});
+      return send(res,200,{ok:true,ticket:ticketPublic(changed,await getChanges(row.code)),twist});
     }
     if(op==='admin-list'&&method==='GET') {
       if(!requireAdmin(req,res))return;
-      const tickets=(await getAllTickets()).map(ticketPublic);
+      const all=await getAllTickets(),changes=await getAllChanges();
+      const grouped=new Map();
+      for(const change of changes) {
+        if(!grouped.has(change.ticket_code))grouped.set(change.ticket_code,[]);
+        grouped.get(change.ticket_code).push(change);
+      }
+      const tickets=all.map(t=>ticketPublic(t,grouped.get(t.code)??[]));
       return send(res,200,{ok:true,tickets,twist:await getTwist()});
     }
     if(op==='review'&&method==='POST') {
@@ -151,6 +159,49 @@ export async function handler(req,res) {
       const row=await reviewTicket(code,grade,feedback);
       if(!row)return fail(res,409,'Var vērtēt tikai iesniegtus ticketus');
       return send(res,200,{ok:true,ticket:ticketPublic(row)});
+    }
+
+    // Jaunas prasības var izsniegt atkārtoti — arī pēc konsultācijas iesniegšanas un novērtēšanas.
+    if(op==='change-preview'&&method==='POST') {
+      if(!requireAdmin(req,res))return;
+      const b=await parseBody(req),code=clean(b.code,20),difficulty=clean(b.difficulty,12);
+      if(!Object.hasOwn(changeLevels,difficulty))return fail(res,400,'Izvēlies vieglu, vidēju vai sarežģītu līmeni');
+      const ticket=await getTicket(code);
+      if(!ticket)return fail(res,404,'Tickets nav atrasts');
+      const round=(await getChanges(code)).length+1;
+      return send(res,200,{ok:true,suggestion:suggestChange(ticket.case_id,difficulty,round)});
+    }
+    if(op==='issue-change'&&method==='POST') {
+      if(!requireAdmin(req,res))return;
+      const b=await parseBody(req),difficulty=clean(b.difficulty,12);
+      if(!Object.hasOwn(changeLevels,difficulty))return fail(res,400,'Izvēlies grūtības līmeni');
+      const all=await getAllTickets();
+      const codes=b.all===true?all.map(t=>t.code):[clean(b.code,20)];
+      if(!codes.length)return fail(res,400,'Nav ticketu, kuriem izsniegt labojumus');
+      const byCode=new Map(all.map(t=>[t.code,t]));
+      if(codes.some(code=>!byCode.has(code)))return fail(res,404,'Tickets nav atrasts');
+      const title=clean(b.title,160),description=clean(b.description,4000);
+      if((title&&!description)||(!title&&description))return fail(res,400,'Aizpildi gan virsrakstu, gan aprakstu vai atstāj abus tukšus automātiskai ģenerēšanai');
+      if(title&&title.length<5)return fail(res,400,'Virsrakstam jābūt vismaz 5 rakstzīmes');
+      if(description&&description.length<20)return fail(res,400,'Aprakstam jābūt vismaz 20 rakstzīmes');
+      const previous=await getAllChanges();
+      const entries=codes.map(code=>{
+        const row=byCode.get(code),round=previous.filter(x=>x.ticket_code===code).length+1;
+        const suggestion=suggestChange(row.case_id,difficulty,round);
+        return {ticket_code:code,difficulty,title:title||suggestion.title,description:description||suggestion.description};
+      });
+      const created=await issueChanges(entries);
+      return send(res,201,{ok:true,created:created.length,changes:created});
+    }
+    if(op==='save-change'&&method==='POST') {
+      const b=await parseBody(req),code=clean(b.code,20),row=await getTicket(code);
+      if(!verifyStudent(row,b.token))return fail(res,403,'Šim ticketam nav piekļuves');
+      const changeId=Number(b.changeId),response=clean(b.response,6000),submit=b.submit===true;
+      if(!Number.isSafeInteger(changeId)||changeId<=0)return fail(res,400,'Nederīgs labojuma ID');
+      if(submit&&response.length<20)return fail(res,400,'Iesniegumā jābūt vismaz 20 rakstzīmēm');
+      const changed=await saveChangeResponse(code,changeId,response,submit);
+      if(!changed)return fail(res,409,'Labojums nav atrasts vai jau ir iesniegts');
+      return send(res,200,{ok:true,change:changed});
     }
     if(op==='twist'&&method==='POST') {
       if(!requireAdmin(req,res))return;
